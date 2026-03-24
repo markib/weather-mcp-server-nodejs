@@ -76,31 +76,52 @@ interface WeatherData {
     humidity: number;
 }
 
-// Input schemas with descriptions
+// Input schemas with comprehensive descriptions
 const GetWeatherInput = z.object({
-    location: z.string().describe('City name or coordinates'),
-    units: z.enum(['celsius', 'fahrenheit']).describe('Temperature units').optional().default('celsius'),
+    location: z.string()
+        .min(1, 'Location cannot be empty')
+        .describe('City name to retrieve weather for. Examples: "London", "New York", "Tokyo", "Saigon". Case-insensitive.'),
+    units: z.enum(['celsius', 'fahrenheit'])
+        .describe('Temperature unit for the response. "celsius" returns temperatures in °C, "fahrenheit" returns in °F.')
+        .optional()
+        .default('celsius'),
 });
 
 const GetForecastInput = z.object({
-    location: z.string().describe('City name'),
-    days: z.number().int().min(1).max(7).describe('Number of forecast days').optional().default(3),
+    location: z.string()
+        .min(1, 'Location cannot be empty')
+        .describe('City name to retrieve forecast for. Examples: "London", "New York", "Tokyo", "Saigon". Case-insensitive.'),
+    days: z.number()
+        .int('Days must be a whole number')
+        .min(1, 'Days must be at least 1')
+        .max(7, 'Forecast is limited to 7 days maximum')
+        .describe('Number of forecast days to return. Must be between 1 and 7. Default is 3 days.')
+        .optional()
+        .default(3),
 });
 
-// Output schemas for type safety
+// Output schemas for type safety with documentation
+/**
+ * Response format for current weather queries
+ * Contains real-time weather information for a specific location
+ */
 const WeatherOutputSchema = z.object({
-    location: z.string(),
-    temperature: z.string(),
-    condition: z.string(),
-    humidity: z.string(),
+    location: z.string().describe('The city name that was queried'),
+    temperature: z.string().describe('Current temperature with unit symbol (e.g., "12°C" or "64.4°F")'),
+    condition: z.string().describe('Current weather condition (e.g., "Sunny", "Rainy", "Partly Cloudy")'),
+    humidity: z.string().describe('Current humidity level as a percentage (e.g., "82%")'),
 });
 
+/**
+ * Response format for weather forecast queries
+ * Contains predicted weather information for multiple days
+ */
 const ForecastOutputSchema = z.object({
-    location: z.string(),
+    location: z.string().describe('The city name that was queried'),
     forecast: z.array(z.object({
-        day: z.number(),
-        temp: z.string(),
-        condition: z.string(),
+        day: z.number().describe('Day number in the forecast (1 = first day, 2 = second day, etc.)'),
+        temp: z.string().describe('Predicted temperature in Celsius (e.g., "22°C")'),
+        condition: z.string().describe('Expected weather condition (e.g., "Sunny", "Rainy")'),
     })),
 });
 
@@ -186,11 +207,27 @@ class WeatherMCPServer {
     }
 
     private setupHandlers() {
-        // Register tools with error handling
+        // Register tools with error handling and comprehensive descriptions
         this.server.registerTool(
             'get_current_weather',
             {
-                description: 'Get current weather for a specific location',
+                description: `Retrieve current weather conditions for a specified location.
+                
+Use this tool to get real-time or near-real-time weather data including temperature, 
+conditions (e.g., sunny, rainy), and humidity percentage for any supported city.
+
+Parameters:
+- location (required): The city name to get weather for (e.g., "London", "New York", "Tokyo")
+- units (optional): Temperature scale - either "celsius" (default) or "fahrenheit"
+
+Returns:
+- location: The requested city name
+- temperature: Current temperature with unit symbol (e.g., "12°C" or "64.4°F")
+- condition: Weather condition description (e.g., "Rainy", "Sunny")
+- humidity: Humidity percentage (e.g., "82%")
+
+If the location is not found, an error response will be returned with available cities.
+Supported cities: New York, London, Tokyo, Saigon`,
                 inputSchema: GetWeatherInput,
             },
             async (args) => {
@@ -206,7 +243,30 @@ class WeatherMCPServer {
         this.server.registerTool(
             'get_forecast',
             {
-                description: 'Get weather forecast for multiple days',
+                description: `Generate a weather forecast for a location over multiple days.
+
+Use this tool when you need to plan ahead and understand weather trends. Provides daily 
+forecasts with temperature predictions and expected weather conditions.
+
+Parameters:
+- location (required): The city name to get forecast for (e.g., "London", "New York", "Tokyo")
+- days (optional): Number of forecast days to return (1-7, default: 3). Must be a whole number.
+
+Returns:
+- location: The requested city name
+- forecast: Array of daily forecasts, each containing:
+  - day: Day number (1 = first day of forecast)
+  - temp: Predicted temperature in Celsius
+  - condition: Expected weather condition
+
+Use cases:
+- Planning outdoor activities or travel
+- Deciding when to do time-sensitive tasks
+- Coordinating schedules across multiple days
+- Preparing appropriate gear or supplies
+
+If the location is not found, an error response will be returned with available cities.
+Supported cities: New York, London, Tokyo, Saigon`,
                 inputSchema: GetForecastInput,
             },
             async (args) => {
@@ -220,6 +280,19 @@ class WeatherMCPServer {
         );
     }
 
+    /**
+     * Retrieve current weather conditions for a specific location
+     * 
+     * This method handles the `get_current_weather` tool request. It:
+     * 1. Validates the input location is not empty
+     * 2. Looks up weather data for the location (case-insensitive)
+     * 3. Converts temperature to the requested unit (celsius or fahrenheit)
+     * 4. Returns a structured response with temperature, condition, and humidity
+     * 
+     * @param args - Tool arguments containing location and optional units
+     * @returns CallToolResult with weather data or error information
+     * @throws ValidationError if input is invalid
+     */
     private async getCurrentWeather(args: GetWeatherInputType): Promise<CallToolResult> {
         try {
             // Validate input
@@ -257,6 +330,13 @@ class WeatherMCPServer {
 
     /**
      * Convert temperature between Celsius and Fahrenheit
+     * 
+     * Converts Celsius to Fahrenheit using the formula: (C × 9/5) + 32
+     * Results are rounded to 1 decimal place for readability
+     * 
+     * @param celsius - Temperature in Celsius
+     * @param target - Target unit: 'celsius' returns unchanged, 'fahrenheit' converts
+     * @returns Temperature in the target unit
      */
     private convertTemperature(celsius: number, target: 'celsius' | 'fahrenheit'): number {
         if (target === 'fahrenheit') {
@@ -265,6 +345,19 @@ class WeatherMCPServer {
         return celsius;
     }
 
+    /**
+     * Generate a weather forecast for a location over multiple days
+     * 
+     * This method handles the `get_forecast` tool request. It:
+     * 1. Validates input (non-empty location, valid day range 1-7)
+     * 2. Looks up weather data for the location (case-insensitive)
+     * 3. Generates a multi-day forecast with temperature variations
+     * 4. Returns structured forecast data with day-by-day predictions
+     * 
+     * @param args - Tool arguments containing location and optional days count
+     * @returns CallToolResult with forecast data or error information
+     * @throws ValidationError if input is invalid (empty location or invalid days)
+     */
     private async getForecast(args: GetForecastInputType): Promise<CallToolResult> {
         try {
             // Validate input
@@ -302,7 +395,19 @@ class WeatherMCPServer {
     }
 
     /**
-     * Generate a forecast for the specified number of days
+     * Generate a daily weather forecast with temperature variations
+     * 
+     * Creates a realistic weather forecast by:
+     * 1. Using the base weather condition from the location data
+     * 2. Varying temperature by ±3°C from the base temperature
+     * 3. Returning a structured array of daily predictions
+     * 
+     * Note: This is a mock generator. In production, use real weather APIs
+     * like OpenWeatherMap, WeatherAPI, or similar services.
+     * 
+     * @param weather - Base weather data for the location
+     * @param days - Number of days to forecast (1-7)
+     * @returns Array of forecast objects with day number, temperature, and condition
      */
     private generateForecast(
         weather: WeatherData,
@@ -321,7 +426,21 @@ class WeatherMCPServer {
     }
 
     /**
-     * Handle errors from tool execution
+     * Unified error handling for all tool operations
+     * 
+     * Processes different error types and returns appropriate responses:
+     * - Zod validation errors: Returns detailed validation error messages
+     * - ValidationError: Returns validation error responses with context
+     * - NotFoundError: Returns not found error responses
+     * - AppError: Returns application-specific errors with codes
+     * - Generic Error: Returns unexpected error responses
+     * - Unknown errors: Returns generic internal error response
+     * 
+     * All errors are logged with appropriate severity levels for debugging
+     * 
+     * @param error - The error object to handle
+     * @param context - String describing where the error occurred (for logging)
+     * @returns CallToolResult with error information structured as JSON
      */
     private handleError(error: unknown, context: string): CallToolResult {
         if (error instanceof z.ZodError) {
@@ -354,6 +473,20 @@ class WeatherMCPServer {
         return createErrorResponse('An unexpected error occurred', 'INTERNAL_ERROR');
     }
 
+    /**
+     * Start the Weather MCP Server
+     * 
+     * Initializes and connects the server using stdio transport:
+     * 1. Creates a StdioServerTransport for command-line communication
+     * 2. Connects the MCP server to the transport
+     * 3. Logs success/failure status
+     * 4. Exits with code 1 on fatal errors
+     * 
+     * The server will listen on standard input/output for MCP protocol
+     * messages and respond to tool calls via the registered handlers.
+     * 
+     * @throws Process exit with code 1 if connection fails
+     */
     async run() {
         try {
             logger.info('Starting Weather MCP Server');
@@ -371,6 +504,27 @@ class WeatherMCPServer {
 // Application Entry Point
 // ============================================================================
 
+/**
+ * Main entry point for the Weather MCP Server application
+ * 
+ * Creates a new WeatherMCPServer instance and starts it with error handling.
+ * This function:
+ * 1. Instantiates the WeatherMCPServer class
+ * 2. Calls the run() method to start the server
+ * 3. Handles any top-level errors
+ * 4. Exits with appropriate status code
+ * 
+ * The server will expose the following tools:
+ * - get_current_weather: Get real-time weather for a location
+ * - get_forecast: Get multi-day weather forecast for a location
+ * 
+ * Usage:
+ *   npm start           # Run the server
+ *   npm test            # Test with the example client
+ *   npm run build       # Compile TypeScript to JavaScript
+ * 
+ * @throws Process exit with code 1 on fatal errors
+ */
 async function main() {
     try {
         const server = new WeatherMCPServer();
