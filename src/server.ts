@@ -41,6 +41,17 @@ class NotFoundError extends AppError {
 }
 
 /**
+ * Security error for potential security violations
+ */
+class SecurityError extends AppError {
+    constructor(message: string) {
+        super(message, 'SECURITY_ERROR');
+        this.name = 'SecurityError';
+        Object.setPrototypeOf(this, SecurityError.prototype);
+    }
+}
+
+/**
  * Logger utility for structured logging
  */
 class Logger {
@@ -66,8 +77,106 @@ class Logger {
 const logger = new Logger();
 
 // ============================================================================
-// Type-Safe Tool Definitions with Input and Output Schemas
+// Security Utilities and Input Validation
 // ============================================================================
+
+/**
+ * Security configuration constants
+ */
+const SECURITY_CONFIG = {
+    // Maximum length for string inputs to prevent DOS/large payload attacks
+    MAX_LOCATION_LENGTH: 100,
+    // Allowed characters for location names (alphanumeric, spaces, hyphens)
+    LOCATION_PATTERN: /^[a-zA-Z0-9\s\-']+$/,
+    // Set of allowed locations to prevent injection attacks
+    ALLOWED_LOCATIONS: new Set(['new york', 'london', 'tokyo', 'saigon']),
+    // Rate limit: requests per second per tool
+    RATE_LIMIT_WINDOW_MS: 1000,
+    MAX_REQUESTS_PER_WINDOW: 100,
+} as const;
+
+/**
+ * Input sanitizer for location strings
+ * 
+ * Safely processes location input by:
+ * 1. Trimming whitespace
+ * 2. Checking length limits (DOS prevention)
+ * 3. Validating character set (injection prevention)
+ * 4. Normalizing to lowercase for comparison
+ * 
+ * @param input - Raw location input from user
+ * @returns Sanitized location string
+ * @throws SecurityError if input fails security checks
+ * @throws ValidationError if input is invalid
+ */
+function sanitizeLocation(input: string): string {
+    // Trim whitespace
+    let sanitized = input.trim();
+
+    // Check for empty input
+    if (sanitized.length === 0) {
+        throw new ValidationError('Location cannot be empty');
+    }
+
+    // Prevent DOS attacks via oversized input
+    if (sanitized.length > SECURITY_CONFIG.MAX_LOCATION_LENGTH) {
+        throw new SecurityError(
+            `Location exceeds maximum length of ${SECURITY_CONFIG.MAX_LOCATION_LENGTH} characters`
+        );
+    }
+
+    // Validate character set to prevent injection attacks
+    if (!SECURITY_CONFIG.LOCATION_PATTERN.test(sanitized)) {
+        throw new SecurityError(
+            'Location contains invalid characters. Only alphanumeric characters, spaces, hyphens, and apostrophes are allowed'
+        );
+    }
+
+    // Additional check: prevent multiple spaces which could be used for obfuscation
+    if (/\s{2,}/.test(sanitized)) {
+        throw new SecurityError('Location cannot contain multiple consecutive spaces');
+    }
+
+    return sanitized;
+}
+
+/**
+ * Rate limiter to prevent DOS attacks
+ * 
+ * Tracks requests per tool and enforces rate limits
+ */
+class RateLimiter {
+    private requestTimestamps: Map<string, number[]> = new Map();
+
+    /**
+     * Check if a request should be allowed based on rate limits
+     * 
+     * @param toolName - Name of the tool being called
+     * @returns true if request is allowed, false if rate limit exceeded
+     */
+    isAllowed(toolName: string): boolean {
+        const now = Date.now();
+        const timestamps = this.requestTimestamps.get(toolName) || [];
+
+        // Remove timestamps outside the current window
+        const recentTimestamps = timestamps.filter(
+            (ts) => now - ts < SECURITY_CONFIG.RATE_LIMIT_WINDOW_MS
+        );
+
+        // Check if we've exceeded the rate limit
+        if (recentTimestamps.length >= SECURITY_CONFIG.MAX_REQUESTS_PER_WINDOW) {
+            logger.warn(`Rate limit exceeded for tool: ${toolName}`);
+            return false;
+        }
+
+        // Add current timestamp
+        recentTimestamps.push(now);
+        this.requestTimestamps.set(toolName, recentTimestamps);
+        return true;
+    }
+}
+
+const rateLimiter = new RateLimiter();
 
 // Weather data type
 interface WeatherData {
@@ -76,10 +185,11 @@ interface WeatherData {
     humidity: number;
 }
 
-// Input schemas with comprehensive descriptions
+// Input schemas with comprehensive descriptions and security constraints
 const GetWeatherInput = z.object({
     location: z.string()
         .min(1, 'Location cannot be empty')
+        .max(SECURITY_CONFIG.MAX_LOCATION_LENGTH, `Location must be ${SECURITY_CONFIG.MAX_LOCATION_LENGTH} characters or less`)
         .describe('City name to retrieve weather for. Examples: "London", "New York", "Tokyo", "Saigon". Case-insensitive.'),
     units: z.enum(['celsius', 'fahrenheit'])
         .describe('Temperature unit for the response. "celsius" returns temperatures in °C, "fahrenheit" returns in °F.')
@@ -90,6 +200,7 @@ const GetWeatherInput = z.object({
 const GetForecastInput = z.object({
     location: z.string()
         .min(1, 'Location cannot be empty')
+        .max(SECURITY_CONFIG.MAX_LOCATION_LENGTH, `Location must be ${SECURITY_CONFIG.MAX_LOCATION_LENGTH} characters or less`)
         .describe('City name to retrieve forecast for. Examples: "London", "New York", "Tokyo", "Saigon". Case-insensitive.'),
     days: z.number()
         .int('Days must be a whole number')
@@ -189,6 +300,7 @@ function createErrorResponse(message: string, code: string = 'ERROR'): CallToolR
 // Create an MCP server
 class WeatherMCPServer {
     private server: McpServer;
+    private weatherRateLimiter: RateLimiter;
 
     constructor() {
         this.server = new McpServer(
@@ -202,6 +314,9 @@ class WeatherMCPServer {
                 },
             }
         );
+
+        // Initialize rate limiter for security
+        this.weatherRateLimiter = new RateLimiter();
 
         this.setupHandlers();
     }
@@ -295,18 +410,27 @@ Supported cities: New York, London, Tokyo, Saigon`,
      */
     private async getCurrentWeather(args: GetWeatherInputType): Promise<CallToolResult> {
         try {
+            // Rate limiting check (SECURITY)
+            if (!this.weatherRateLimiter.isAllowed('get_current_weather')) {
+                logger.warn(`Rate limit exceeded for get_current_weather`);
+                throw new SecurityError('Rate limit exceeded. Too many requests.');
+            }
+
+            // Input sanitization (SECURITY)
+            const sanitizedLocation = sanitizeLocation(args.location);
+
             // Validate input
-            if (!args.location || args.location.trim().length === 0) {
+            if (!sanitizedLocation || sanitizedLocation.length === 0) {
                 throw new ValidationError('Location cannot be empty');
             }
 
-            const locationLower = args.location.toLowerCase().trim();
+            const locationLower = sanitizedLocation.toLowerCase().trim();
             const weather = weatherData[locationLower];
 
             if (!weather) {
-                logger.warn(`Weather data not found for location: ${args.location}`);
+                logger.warn(`Weather data not found for location: ${sanitizedLocation}`);
                 return createErrorResponse(
-                    `Weather data not found for "${args.location}". Try: New York, London, Tokyo, or Saigon.`,
+                    `Weather data not found for "${sanitizedLocation}". Try: New York, London, Tokyo, or Saigon.`,
                     'NOT_FOUND'
                 );
             }
@@ -315,13 +439,13 @@ Supported cities: New York, London, Tokyo, Saigon`,
             const unitSymbol = args.units === 'fahrenheit' ? '°F' : '°C';
 
             const output: WeatherOutputType = {
-                location: args.location,
+                location: sanitizedLocation,
                 temperature: `${temp}${unitSymbol}`,
                 condition: weather.condition,
                 humidity: `${weather.humidity}%`,
             };
 
-            logger.info(`Successfully retrieved weather for ${args.location}`);
+            logger.info(`Successfully retrieved weather for ${sanitizedLocation}`);
             return createJsonResponse(output, WeatherOutputSchema);
         } catch (error) {
             return this.handleError(error, 'getCurrentWeather');
@@ -360,21 +484,30 @@ Supported cities: New York, London, Tokyo, Saigon`,
      */
     private async getForecast(args: GetForecastInputType): Promise<CallToolResult> {
         try {
+            // Rate limiting check (SECURITY)
+            if (!this.weatherRateLimiter.isAllowed('get_forecast')) {
+                logger.warn(`Rate limit exceeded for get_forecast`);
+                throw new SecurityError('Rate limit exceeded. Too many requests.');
+            }
+
+            // Input sanitization (SECURITY)
+            const sanitizedLocation = sanitizeLocation(args.location);
+
             // Validate input
-            if (!args.location || args.location.trim().length === 0) {
+            if (!sanitizedLocation || sanitizedLocation.length === 0) {
                 throw new ValidationError('Location cannot be empty');
             }
             if (args.days < 1 || args.days > 7) {
                 throw new ValidationError('Days must be between 1 and 7');
             }
 
-            const locationLower = args.location.toLowerCase().trim();
+            const locationLower = sanitizedLocation.toLowerCase().trim();
             const weather = weatherData[locationLower];
 
             if (!weather) {
-                logger.warn(`Weather data not found for location: ${args.location}`);
+                logger.warn(`Weather data not found for location: ${sanitizedLocation}`);
                 return createErrorResponse(
-                    `Location "${args.location}" not found.`,
+                    `Location "${sanitizedLocation}" not found.`,
                     'NOT_FOUND'
                 );
             }
@@ -383,11 +516,11 @@ Supported cities: New York, London, Tokyo, Saigon`,
             const forecast = this.generateForecast(weather, args.days);
 
             const output: ForecastOutputType = {
-                location: args.location,
+                location: sanitizedLocation,
                 forecast,
             };
 
-            logger.info(`Successfully retrieved forecast for ${args.location} (${args.days} days)`);
+            logger.info(`Successfully retrieved forecast for ${sanitizedLocation} (${args.days} days)`);
             return createJsonResponse(output, ForecastOutputSchema);
         } catch (error) {
             return this.handleError(error, 'getForecast');
@@ -447,6 +580,11 @@ Supported cities: New York, London, Tokyo, Saigon`,
             const message = `Validation error: ${error.message}`;
             logger.warn(message);
             return createErrorResponse(message, 'VALIDATION_ERROR');
+        }
+
+        if (error instanceof SecurityError) {
+            logger.warn(`${context}: Security violation - ${error.message}`);
+            return createErrorResponse(error.message, error.code);
         }
 
         if (error instanceof ValidationError) {
