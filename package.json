@@ -5,6 +5,8 @@
   "main": "index.js",
   "scripts": {
     "test": "tsx src/client.ts",
+    "test:unit": "vitest run",
+    "test:integration": "tsx scripts/test-server.ts",
     "start": "tsx src/server.ts",
     "watch": "tsc -w",
     "build": "tsc",
@@ -21,6 +23,7 @@
   "devDependencies": {
     "@types/node": "^25.5.0",
     "tsx": "^4.21.0",
-    "typescript": "^6.0.2"
+    "typescript": "^6.0.2",
+    "vitest": "^4.1.1"
   }
 }

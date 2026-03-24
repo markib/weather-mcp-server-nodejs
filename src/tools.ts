@@ -9,13 +9,15 @@ import {
 import { AppError, ValidationError, NotFoundError, SecurityError } from './errors.js';
 import { logger } from './logger.js';
 
+import { config } from './config.js';
+
 // Security configuration constants
 const SECURITY_CONFIG = {
-  MAX_LOCATION_LENGTH: 100,
+  MAX_LOCATION_LENGTH: config.maxLocationLength,
   LOCATION_PATTERN: /^[a-zA-Z0-9\s\-']+$/,
-  ALLOWED_LOCATIONS: new Set(['new york', 'london', 'tokyo', 'saigon']),
-  RATE_LIMIT_WINDOW_MS: 1000,
-  MAX_REQUESTS_PER_WINDOW: 100,
+  ALLOWED_LOCATIONS: new Set(config.supportedCities.map((city) => city.toLowerCase())),
+  RATE_LIMIT_WINDOW_MS: config.rateLimitWindowMs,
+  MAX_REQUESTS_PER_WINDOW: config.maxRequestsPerWindow,
 } as const;
 
 class RateLimiter {

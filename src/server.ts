@@ -1,8 +1,14 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
+import {
+    ListToolsRequestSchema,
+    CallToolRequestSchema,
+} from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import { toolDefinitions } from "./tools.js";
+import { registerResources } from "./resources.js";
+import { registerPrompts } from "./prompts.js";
 import { AppError, ValidationError, NotFoundError, SecurityError } from "./errors.js";
 import { logger } from "./logger.js";
 
@@ -76,26 +82,38 @@ class WeatherMCPServer {
             }
         );
 
+        registerResources(this.server);
+        registerPrompts(this.server);
         this.setupHandlers();
     }
 
     private setupHandlers() {
-        for (const tool of toolDefinitions) {
-            this.server.registerTool(
-                tool.name,
-                {
+        // Register list-tools request handler
+        this.server.server.setRequestHandler(ListToolsRequestSchema, async () => {
+            return {
+                tools: toolDefinitions.map((tool) => ({
+                    name: tool.name,
                     description: tool.description,
                     inputSchema: tool.inputSchema,
-                },
-                async (args: unknown) => {
-                    try {
-                        return await tool.handler(args);
-                    } catch (error) {
-                        return this.handleError(error, tool.name);
-                    }
-                }
-            );
-        }
+                })),
+            };
+        });
+
+        // Register call-tool request handler
+        this.server.server.setRequestHandler(CallToolRequestSchema, async (request) => {
+            const tool = toolDefinitions.find((t) => t.name === request.params.name);
+
+            if (!tool) {
+                return createErrorResponse(`Tool ${request.params.name} not found`, 'NOT_FOUND');
+            }
+
+            try {
+                const result = await tool.handler(request.params.arguments ?? {});
+                return result;
+            } catch (error) {
+                return this.handleError(error, tool.name);
+            }
+        });
     }
 
     // Tool implementations are now handled in src/tools.ts using toolDefinitions.
@@ -179,6 +197,20 @@ class WeatherMCPServer {
             process.exit(1);
         }
     }
+
+    async shutdown() {
+        logger.info('Shutdown initiated for Weather MCP Server');
+        try {
+            if (this.server.isConnected()) {
+                await this.server.close();
+                logger.info('Weather MCP Server shutdown complete');
+            } else {
+                logger.info('Weather MCP Server was not connected; no close required');
+            }
+        } catch (error) {
+            logger.error('Error during Weather MCP Server shutdown', error);
+        }
+    }
 }
 
 // ============================================================================
@@ -206,9 +238,41 @@ class WeatherMCPServer {
  * 
  * @throws Process exit with code 1 on fatal errors
  */
+function setupShutdownHandlers(server: WeatherMCPServer) {
+    let isShuttingDown = false;
+
+    async function shutdown(code: number, reason: string) {
+        if (isShuttingDown) {
+            return;
+        }
+        isShuttingDown = true;
+
+        logger.info(`${reason} received, starting graceful shutdown`);
+
+        await server.shutdown();
+
+        logger.info('Graceful shutdown complete');
+        process.exit(code);
+    }
+
+    process.once('SIGINT', () => shutdown(0, 'SIGINT'));
+    process.once('SIGTERM', () => shutdown(0, 'SIGTERM'));
+
+    process.on('uncaughtException', async (error: Error) => {
+        logger.error('Uncaught exception caught', error);
+        await shutdown(1, 'uncaughtException');
+    });
+
+    process.on('unhandledRejection', async (reason: unknown) => {
+        logger.error('Unhandled promise rejection', reason);
+        await shutdown(1, 'unhandledRejection');
+    });
+}
+
 async function main() {
     try {
         const server = new WeatherMCPServer();
+        setupShutdownHandlers(server);
         await server.run();
     } catch (error) {
         logger.error('Fatal error in main', error);

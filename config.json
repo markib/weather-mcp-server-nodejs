@@ -1,0 +1,9 @@
+{
+  "serverName": "weather-mcp-server",
+  "version": "1.0.0",
+  "supportedCities": ["New York", "London", "Tokyo", "Saigon"],
+  "maxForecastDays": 7,
+  "maxLocationLength": 100,
+  "rateLimitWindowMs": 1000,
+  "maxRequestsPerWindow": 100
+}
