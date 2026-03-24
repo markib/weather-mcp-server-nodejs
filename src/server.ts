@@ -4,6 +4,68 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 
 // ============================================================================
+// Custom Error Classes for Proper Error Handling
+// ============================================================================
+
+/**
+ * Base application error class
+ */
+class AppError extends Error {
+    constructor(message: string, public code: string = 'INTERNAL_ERROR') {
+        super(message);
+        this.name = 'AppError';
+        Object.setPrototypeOf(this, AppError.prototype);
+    }
+}
+
+/**
+ * Validation error for invalid input data
+ */
+class ValidationError extends AppError {
+    constructor(message: string) {
+        super(message, 'VALIDATION_ERROR');
+        this.name = 'ValidationError';
+        Object.setPrototypeOf(this, ValidationError.prototype);
+    }
+}
+
+/**
+ * Not found error for missing resources
+ */
+class NotFoundError extends AppError {
+    constructor(resource: string) {
+        super(`${resource} not found`, 'NOT_FOUND');
+        this.name = 'NotFoundError';
+        Object.setPrototypeOf(this, NotFoundError.prototype);
+    }
+}
+
+/**
+ * Logger utility for structured logging
+ */
+class Logger {
+    private prefix = '[WeatherServer]';
+
+    info(message: string, data?: unknown): void {
+        console.error(`${this.prefix} [INFO] ${message}`, data ? JSON.stringify(data) : '');
+    }
+
+    error(message: string, error?: unknown): void {
+        if (error instanceof Error) {
+            console.error(`${this.prefix} [ERROR] ${message}`, error.message, error.stack);
+        } else {
+            console.error(`${this.prefix} [ERROR] ${message}`, error);
+        }
+    }
+
+    warn(message: string, data?: unknown): void {
+        console.error(`${this.prefix} [WARN] ${message}`, data ? JSON.stringify(data) : '');
+    }
+}
+
+const logger = new Logger();
+
+// ============================================================================
 // Type-Safe Tool Definitions with Input and Output Schemas
 // ============================================================================
 
@@ -78,10 +140,29 @@ function createTextResponse(text: string): CallToolResult {
  * Create a JSON response with validation
  */
 function createJsonResponse<T>(data: T, schema?: z.ZodSchema<T>): CallToolResult {
-    if (schema) {
-        schema.parse(data); // Validate the output
+    try {
+        if (schema) {
+            schema.parse(data); // Validate the output
+        }
+        return createTextResponse(JSON.stringify(data, null, 2));
+    } catch (error) {
+        let message = 'Failed to create response';
+        if (error instanceof z.ZodError) {
+            message = `Output validation failed: ${error.message}`;
+        }
+        throw new AppError(message, 'OUTPUT_VALIDATION_ERROR');
     }
-    return createTextResponse(JSON.stringify(data, null, 2));
+}
+
+/**
+ * Create an error response
+ */
+function createErrorResponse(message: string, code: string = 'ERROR'): CallToolResult {
+    return createTextResponse(JSON.stringify({
+        error: true,
+        code,
+        message,
+    }, null, 2));
 }
 
 // Create an MCP server
@@ -105,14 +186,21 @@ class WeatherMCPServer {
     }
 
     private setupHandlers() {
-        // Register tools with type-safe handlers
+        // Register tools with error handling
         this.server.registerTool(
             'get_current_weather',
             {
                 description: 'Get current weather for a specific location',
                 inputSchema: GetWeatherInput,
             },
-            async (args) => this.getCurrentWeather(args as GetWeatherInputType)
+            async (args) => {
+                try {
+                    const validated = GetWeatherInput.parse(args);
+                    return await this.getCurrentWeather(validated);
+                } catch (error) {
+                    return this.handleError(error, 'get_current_weather');
+                }
+            }
         );
 
         this.server.registerTool(
@@ -121,31 +209,50 @@ class WeatherMCPServer {
                 description: 'Get weather forecast for multiple days',
                 inputSchema: GetForecastInput,
             },
-            async (args) => this.getForecast(args as GetForecastInputType)
+            async (args) => {
+                try {
+                    const validated = GetForecastInput.parse(args);
+                    return await this.getForecast(validated);
+                } catch (error) {
+                    return this.handleError(error, 'get_forecast');
+                }
+            }
         );
     }
 
     private async getCurrentWeather(args: GetWeatherInputType): Promise<CallToolResult> {
-        const locationLower = args.location.toLowerCase();
-        const weather = weatherData[locationLower];
+        try {
+            // Validate input
+            if (!args.location || args.location.trim().length === 0) {
+                throw new ValidationError('Location cannot be empty');
+            }
 
-        if (!weather) {
-            return createTextResponse(
-                `Weather data not found for "${args.location}". Try: New York, London, Tokyo, or Saigon.`
-            );
+            const locationLower = args.location.toLowerCase().trim();
+            const weather = weatherData[locationLower];
+
+            if (!weather) {
+                logger.warn(`Weather data not found for location: ${args.location}`);
+                return createErrorResponse(
+                    `Weather data not found for "${args.location}". Try: New York, London, Tokyo, or Saigon.`,
+                    'NOT_FOUND'
+                );
+            }
+
+            const temp = this.convertTemperature(weather.temp, args.units);
+            const unitSymbol = args.units === 'fahrenheit' ? '°F' : '°C';
+
+            const output: WeatherOutputType = {
+                location: args.location,
+                temperature: `${temp}${unitSymbol}`,
+                condition: weather.condition,
+                humidity: `${weather.humidity}%`,
+            };
+
+            logger.info(`Successfully retrieved weather for ${args.location}`);
+            return createJsonResponse(output, WeatherOutputSchema);
+        } catch (error) {
+            return this.handleError(error, 'getCurrentWeather');
         }
-
-        const temp = this.convertTemperature(weather.temp, args.units);
-        const unitSymbol = args.units === 'fahrenheit' ? '°F' : '°C';
-
-        const output: WeatherOutputType = {
-            location: args.location,
-            temperature: `${temp}${unitSymbol}`,
-            condition: weather.condition,
-            humidity: `${weather.humidity}%`,
-        };
-
-        return createJsonResponse(output, WeatherOutputSchema);
     }
 
     /**
@@ -159,22 +266,39 @@ class WeatherMCPServer {
     }
 
     private async getForecast(args: GetForecastInputType): Promise<CallToolResult> {
-        const locationLower = args.location.toLowerCase();
-        const weather = weatherData[locationLower];
+        try {
+            // Validate input
+            if (!args.location || args.location.trim().length === 0) {
+                throw new ValidationError('Location cannot be empty');
+            }
+            if (args.days < 1 || args.days > 7) {
+                throw new ValidationError('Days must be between 1 and 7');
+            }
 
-        if (!weather) {
-            return createTextResponse(`Location "${args.location}" not found.`);
+            const locationLower = args.location.toLowerCase().trim();
+            const weather = weatherData[locationLower];
+
+            if (!weather) {
+                logger.warn(`Weather data not found for location: ${args.location}`);
+                return createErrorResponse(
+                    `Location "${args.location}" not found.`,
+                    'NOT_FOUND'
+                );
+            }
+
+            // Generate mock forecast with proper typing
+            const forecast = this.generateForecast(weather, args.days);
+
+            const output: ForecastOutputType = {
+                location: args.location,
+                forecast,
+            };
+
+            logger.info(`Successfully retrieved forecast for ${args.location} (${args.days} days)`);
+            return createJsonResponse(output, ForecastOutputSchema);
+        } catch (error) {
+            return this.handleError(error, 'getForecast');
         }
-
-        // Generate mock forecast with proper typing
-        const forecast = this.generateForecast(weather, args.days);
-
-        const output: ForecastOutputType = {
-            location: args.location,
-            forecast,
-        };
-
-        return createJsonResponse(output, ForecastOutputSchema);
     }
 
     /**
@@ -196,12 +320,68 @@ class WeatherMCPServer {
         return forecast;
     }
 
+    /**
+     * Handle errors from tool execution
+     */
+    private handleError(error: unknown, context: string): CallToolResult {
+        if (error instanceof z.ZodError) {
+            const message = `Validation error: ${error.message}`;
+            logger.warn(message);
+            return createErrorResponse(message, 'VALIDATION_ERROR');
+        }
+
+        if (error instanceof ValidationError) {
+            logger.warn(`${context}: ${error.message}`);
+            return createErrorResponse(error.message, error.code);
+        }
+
+        if (error instanceof NotFoundError) {
+            logger.info(`${context}: ${error.message}`);
+            return createErrorResponse(error.message, error.code);
+        }
+
+        if (error instanceof AppError) {
+            logger.error(`${context}: ${error.message}`, error);
+            return createErrorResponse(error.message, error.code);
+        }
+
+        if (error instanceof Error) {
+            logger.error(`${context}: Unexpected error`, error);
+            return createErrorResponse(`Internal error: ${error.message}`, 'INTERNAL_ERROR');
+        }
+
+        logger.error(`${context}: Unknown error`, error);
+        return createErrorResponse('An unexpected error occurred', 'INTERNAL_ERROR');
+    }
+
     async run() {
-        const transport = new StdioServerTransport();
-        await this.server.connect(transport);
-        console.error('Weather MCP Server running on stdio');
+        try {
+            logger.info('Starting Weather MCP Server');
+            const transport = new StdioServerTransport();
+            await this.server.connect(transport);
+            logger.info('Weather MCP Server connected and running on stdio');
+        } catch (error) {
+            logger.error('Failed to start server', error);
+            process.exit(1);
+        }
     }
 }
 
-const server = new WeatherMCPServer();
-server.run().catch(console.error);
+// ============================================================================
+// Application Entry Point
+// ============================================================================
+
+async function main() {
+    try {
+        const server = new WeatherMCPServer();
+        await server.run();
+    } catch (error) {
+        logger.error('Fatal error in main', error);
+        process.exit(1);
+    }
+}
+
+main().catch((error) => {
+    console.error('Unhandled error in main:', error);
+    process.exit(1);
+});
