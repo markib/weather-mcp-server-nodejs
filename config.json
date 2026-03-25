@@ -6,6 +6,6 @@
   "maxLocationLength": 100,
   "rateLimitWindowMs": 1000,
   "maxRequestsPerWindow": 100,
-  "authEnabled": false,
-  "bearerToken": null
+  "authEnabled": true,
+  "bearerToken": "weather-api-token-2024"
 }
