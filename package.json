@@ -7,6 +7,7 @@
     "test": "tsx src/client.ts",
     "test:unit": "vitest run",
     "test:integration": "tsx scripts/test-server.ts",
+    "test:auth": "tsx scripts/test-auth.ts",
     "start": "tsx src/server.ts",
     "watch": "tsc -w",
     "build": "tsc",

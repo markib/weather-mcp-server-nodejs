@@ -5,5 +5,7 @@
   "maxForecastDays": 7,
   "maxLocationLength": 100,
   "rateLimitWindowMs": 1000,
-  "maxRequestsPerWindow": 100
+  "maxRequestsPerWindow": 100,
+  "authEnabled": false,
+  "bearerToken": null
 }

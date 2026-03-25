@@ -9,8 +9,9 @@ import { z } from "zod";
 import { toolDefinitions } from "./tools.js";
 import { registerResources } from "./resources.js";
 import { registerPrompts } from "./prompts.js";
-import { AppError, ValidationError, NotFoundError, SecurityError } from "./errors.js";
+import { AppError, ValidationError, NotFoundError, SecurityError, AuthError } from "./errors.js";
 import { logger } from "./logger.js";
+import { authenticateRequest } from "./auth.js";
 
 // Note: Tool handlers are in src/tools.ts (includes validation + operations)
 // Server is responsible for registering these tools with MCP.
@@ -89,29 +90,37 @@ class WeatherMCPServer {
 
     private setupHandlers() {
         // Register list-tools request handler
-        this.server.server.setRequestHandler(ListToolsRequestSchema, async () => {
-            return {
-                tools: toolDefinitions.map((tool) => ({
-                    name: tool.name,
-                    description: tool.description,
-                    inputSchema: tool.inputSchema,
-                })),
-            };
+        this.server.server.setRequestHandler(ListToolsRequestSchema, async (request) => {
+            try {
+                authenticateRequest();
+                return {
+                    tools: toolDefinitions.map((tool) => ({
+                        name: tool.name,
+                        description: tool.description,
+                        inputSchema: tool.inputSchema,
+                    })),
+                };
+            } catch (error) {
+                return this.handleError(error, 'list-tools');
+            }
         });
 
         // Register call-tool request handler
         this.server.server.setRequestHandler(CallToolRequestSchema, async (request) => {
-            const tool = toolDefinitions.find((t) => t.name === request.params.name);
-
-            if (!tool) {
-                return createErrorResponse(`Tool ${request.params.name} not found`, 'NOT_FOUND');
-            }
-
+            let toolName = 'unknown-tool';
             try {
+                authenticateRequest();
+                const tool = toolDefinitions.find((t) => t.name === request.params.name);
+
+                if (!tool) {
+                    return createErrorResponse(`Tool ${request.params.name} not found`, 'NOT_FOUND');
+                }
+
+                toolName = tool.name;
                 const result = await tool.handler(request.params.arguments ?? {});
                 return result;
             } catch (error) {
-                return this.handleError(error, tool.name);
+                return this.handleError(error, toolName);
             }
         });
     }
@@ -141,6 +150,11 @@ class WeatherMCPServer {
             const message = `Validation error: ${error.message}`;
             logger.warn(message);
             return createErrorResponse(message, 'VALIDATION_ERROR');
+        }
+
+        if (error instanceof AuthError) {
+            logger.warn(`${context}: ${error.message}`);
+            return createErrorResponse(error.message, error.code);
         }
 
         if (error instanceof SecurityError) {

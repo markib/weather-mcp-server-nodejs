@@ -29,3 +29,11 @@ export class SecurityError extends AppError {
     Object.setPrototypeOf(this, SecurityError.prototype);
   }
 }
+
+export class AuthError extends AppError {
+  constructor(message: string = 'Authentication required') {
+    super(message, 'AUTH_ERROR');
+    this.name = 'AuthError';
+    Object.setPrototypeOf(this, AuthError.prototype);
+  }
+}

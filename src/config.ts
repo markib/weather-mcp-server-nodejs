@@ -10,6 +10,8 @@ const RawConfigSchema = z.object({
   maxLocationLength: z.number().int().min(1).optional(),
   rateLimitWindowMs: z.number().int().min(1).optional(),
   maxRequestsPerWindow: z.number().int().min(1).optional(),
+  authEnabled: z.boolean().optional(),
+  bearerToken: z.string().nullable().optional(),
 });
 
 export const ConfigSchema = RawConfigSchema.extend({
@@ -22,6 +24,8 @@ export const ConfigSchema = RawConfigSchema.extend({
   maxLocationLength: z.number().int().min(1).default(100),
   rateLimitWindowMs: z.number().int().min(1).default(1000),
   maxRequestsPerWindow: z.number().int().min(1).default(100),
+  authEnabled: z.boolean().default(false),
+  bearerToken: z.string().optional(),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;
@@ -67,6 +71,8 @@ const envConfig: Partial<RawConfig> = {
   maxLocationLength: parseEnvValue(process.env.MAX_LOCATION_LENGTH, Number),
   rateLimitWindowMs: parseEnvValue(process.env.RATE_LIMIT_WINDOW_MS, Number),
   maxRequestsPerWindow: parseEnvValue(process.env.MAX_REQUESTS_PER_WINDOW, Number),
+  authEnabled: parseEnvValue(process.env.AUTH_ENABLED, (s) => s.toLowerCase() === 'true'),
+  bearerToken: process.env.BEARER_TOKEN,
 };
 
 export const config = ConfigSchema.parse({
