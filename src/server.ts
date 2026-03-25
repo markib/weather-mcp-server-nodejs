@@ -117,7 +117,26 @@ class WeatherMCPServer {
                 }
 
                 toolName = tool.name;
-                const result = await tool.handler(request.params.arguments ?? {});
+                let args = request.params.arguments ?? {};
+
+                // Support tool-specific metadata fallback for location if not in arguments
+                const metaLocation = request.params._meta?.location;
+                if (!args.location && typeof metaLocation === 'string' && metaLocation.trim() !== '') {
+                    args.location = metaLocation;
+                }
+
+                let result;
+                try {
+                    result = await tool.handler(args);
+                } catch (error) {
+                    if (error instanceof z.ZodError && error.message.includes('location')) {
+                        // Retry with default location
+                        args = { location: 'London', ...args };
+                        result = await tool.handler(args);
+                    } else {
+                        throw error;
+                    }
+                }
                 return result;
             } catch (error) {
                 return this.handleError(error, toolName);

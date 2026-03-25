@@ -64,4 +64,31 @@ describe('Tool handlers', () => {
       await tool!.handler({ location: 'New York', days: 10 });
     }).rejects.toThrow();
   });
+
+  it('get_current_weather returns Tokyo weather', async () => {
+    const tool = toolDefinitions.find((t) => t.name === 'get_current_weather');
+    expect(tool).toBeDefined();
+
+    const result = await tool!.handler({ location: 'Tokyo' });
+    const parsed = parseToolResult(result);
+
+    expect(parsed).toMatchObject({
+      location: 'Tokyo',
+      condition: 'Sunny',
+      humidity: '55%',
+    });
+    expect(parsed.temperature).toBe('22°C');
+  });
+
+  it('get_forecast returns Tokyo forecast', async () => {
+    const tool = toolDefinitions.find((t) => t.name === 'get_forecast');
+    expect(tool).toBeDefined();
+
+    const result = await tool!.handler({ location: 'Tokyo' });
+    const parsed = parseToolResult(result);
+
+    expect(parsed).toMatchObject({ location: 'Tokyo' });
+    expect(Array.isArray(parsed.forecast)).toBe(true);
+    expect(parsed.forecast).toHaveLength(3);
+  });
 });

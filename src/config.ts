@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { z } from 'zod';
+import { logger } from './logger.js';
 
 const RawConfigSchema = z.object({
   serverName: z.string().optional(),
@@ -80,7 +81,7 @@ export const config = ConfigSchema.parse({
   ...envConfig,
 });
 
-console.info('Configuration loaded', {
+logger.info('Configuration loaded', {
   serverName: config.serverName,
   version: config.version,
   supportedCities: config.supportedCities,
