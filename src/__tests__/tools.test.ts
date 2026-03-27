@@ -65,6 +65,15 @@ describe('Tool handlers', () => {
     }).rejects.toThrow();
   });
 
+  it('get_forecast rejects days beyond configured max with ValidationError', async () => {
+    const tool = toolDefinitions.find((t) => t.name === 'get_forecast');
+    expect(tool).toBeDefined();
+
+    await expect(async () => {
+      await tool!.handler({ location: 'New York', days: 8 });
+    }).rejects.toThrow();
+  });
+
   it('get_current_weather returns Tokyo weather', async () => {
     const tool = toolDefinitions.find((t) => t.name === 'get_current_weather');
     expect(tool).toBeDefined();

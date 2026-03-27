@@ -81,6 +81,10 @@ export const config = ConfigSchema.parse({
   ...envConfig,
 });
 
+if (config.authEnabled && !config.bearerToken) {
+  throw new Error('Configuration error: authEnabled is true but bearerToken is not set');
+}
+
 logger.info('Configuration loaded', {
   serverName: config.serverName,
   version: config.version,

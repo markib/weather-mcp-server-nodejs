@@ -18,6 +18,7 @@ const SECURITY_CONFIG = {
   ALLOWED_LOCATIONS: new Set(config.supportedCities.map((city) => city.toLowerCase())),
   RATE_LIMIT_WINDOW_MS: config.rateLimitWindowMs,
   MAX_REQUESTS_PER_WINDOW: config.maxRequestsPerWindow,
+  MAX_FORECAST_DAYS: config.maxForecastDays,
 } as const;
 
 class RateLimiter {
@@ -58,6 +59,11 @@ function sanitizeLocation(input: string): string {
 
   if (/\s{2,}/.test(sanitized)) {
     throw new SecurityError('Location cannot contain multiple consecutive spaces');
+  }
+
+  const normalized = sanitized.toLowerCase();
+  if (!SECURITY_CONFIG.ALLOWED_LOCATIONS.has(normalized)) {
+    throw new NotFoundError(`Location ${sanitized} is not supported`);
   }
 
   return sanitized;
@@ -167,6 +173,10 @@ async function getForecastHandler(args: unknown): Promise<CallToolResult> {
   const weather = weatherData[normalized];
   if (!weather) {
     throw new NotFoundError(`Weather data for location ${sanitizedLocation}`);
+  }
+
+  if (validated.days > SECURITY_CONFIG.MAX_FORECAST_DAYS) {
+    throw new ValidationError(`Forecast days cannot exceed configured maximum of ${SECURITY_CONFIG.MAX_FORECAST_DAYS}`);
   }
 
   const forecast = generateForecast(weather, validated.days);

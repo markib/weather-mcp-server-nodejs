@@ -2,7 +2,7 @@
   "name": "weather-mcp-server",
   "version": "1.0.0",
   "type": "module",
-  "main": "index.js",
+  "main": "server.js",
   "scripts": {
     "test": "tsx src/client.ts",
     "test:unit": "vitest run",
@@ -11,7 +11,7 @@
     "start": "tsx src/server.ts",
     "watch": "tsc -w",
     "build": "tsc",
-    "inspector": "npx @modelcontextprotocol/inspector node dist/index.js"
+    "inspector": "npx @modelcontextprotocol/inspector node dist/server.js"
   },
   "keywords": [],
   "author": "",

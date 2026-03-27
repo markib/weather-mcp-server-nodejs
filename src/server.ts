@@ -117,26 +117,14 @@ class WeatherMCPServer {
                 }
 
                 toolName = tool.name;
-                let args = request.params.arguments ?? {};
+                const args = (request.params.arguments ?? {}) as Record<string, unknown>;
 
                 // Support tool-specific metadata fallback for location if not in arguments
-                const metaLocation = request.params._meta?.location;
-                if (!args.location && typeof metaLocation === 'string' && metaLocation.trim() !== '') {
-                    args.location = metaLocation;
+                if (!args.location && typeof request.params._meta?.location === 'string') {
+                    args.location = request.params._meta.location;
                 }
 
-                let result;
-                try {
-                    result = await tool.handler(args);
-                } catch (error) {
-                    if (error instanceof z.ZodError && error.message.includes('location')) {
-                        // Retry with default location
-                        args = { location: 'London', ...args };
-                        result = await tool.handler(args);
-                    } else {
-                        throw error;
-                    }
-                }
+                const result = await tool.handler(args);
                 return result;
             } catch (error) {
                 return this.handleError(error, toolName);
@@ -290,6 +278,11 @@ function setupShutdownHandlers(server: WeatherMCPServer) {
 
     process.once('SIGINT', () => shutdown(0, 'SIGINT'));
     process.once('SIGTERM', () => shutdown(0, 'SIGTERM'));
+
+    // Windows-specific shutdown signal support
+    if (process.platform === 'win32') {
+      process.once('SIGBREAK', () => shutdown(0, 'SIGBREAK'));
+    }
 
     process.on('uncaughtException', async (error: Error) => {
         logger.error('Uncaught exception caught', error);
