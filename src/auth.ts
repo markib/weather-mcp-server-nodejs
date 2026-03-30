@@ -30,7 +30,8 @@ function constantTimeCompare(a: string, b: string): boolean {
 
   let result = 0;
   for (let i = 0; i < bufA.length; i++) {
-    result |= (bufA[i] ^ bufB[i]) & 0xFF;
+    // Adding ! after the brackets tells TS these won't be undefined
+    result |= (bufA[i]! ^ bufB[i]!) & 0xFF;
   }
   return result === 0;
 }
