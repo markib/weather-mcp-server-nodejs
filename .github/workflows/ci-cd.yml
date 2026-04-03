@@ -6,14 +6,16 @@ on:
   pull_request:
     branches: [main]
 
+# Standardize permissions for the entire workflow
+permissions:
+  contents: write  # Required for ncipollo/release-action to create releases
+
 jobs:
   build-test:
     runs-on: ubuntu-latest
-
     strategy:
       matrix:
         node-version: [20.x, 22.x]
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -36,9 +38,9 @@ jobs:
       - name: Run integration tests
         run: npm run test:integration
 
-      - name: Run lint (if configured)
+      - name: Run lint
         run: |
-          if [ -f package.json ] && npm run | grep -q "lint"; then
+          if npm run | grep -q "lint"; then
             npm run lint
           else
             echo "No lint script found, skipping."
@@ -46,7 +48,8 @@ jobs:
 
   release:
     needs: build-test
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    # Only run on push to main, not on pull requests
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
 
     steps:
@@ -68,8 +71,9 @@ jobs:
       - name: Create Release
         uses: ncipollo/release-action@v1
         with:
-          tag: v${{ github.run_number }}
-          name: "Release ${{ github.run_number }}"
-          body: "Automated release from workflow"
+          token: ${{ secrets.GITHUB_TOKEN }} # Explicitly pass the token
+          tag: v1.0.${{ github.run_number }} # Added a patch version format
+          name: "Release v1.0.${{ github.run_number }}"
+          body: "Automated release from GitHub Actions workflow."
           draft: false
           prerelease: false
